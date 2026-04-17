@@ -27,6 +27,10 @@
             grid-template-columns: repeat(7, 1fr);
             gap: 8px;
         }
+        /* Mobile Touch Optimizations */
+        button {
+            touch-action: manipulation;
+        }
     </style>
 </head>
 <body>
@@ -35,9 +39,11 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        // --- Firebase Configuration ---
-        // 주의: 이 설정값은 캔버스 실행 환경에서 자동으로 제공되는 변수들을 사용합니다.
-        // 만약 외부 호스팅(Vercel 등)에서 개별적으로 사용하시려면 실제 Firebase 프로젝트의 Config 객체를 넣어주세요.
+        /**
+         * Firebase Configuration
+         * Note: In a production environment, you should replace these placeholders
+         * with your actual Firebase project configuration.
+         */
         const firebaseConfig = JSON.parse(__firebase_config);
         firebase.initializeApp(firebaseConfig);
         
@@ -57,7 +63,7 @@
             const [isJoined, setIsJoined] = useState(false);
             const [isLoading, setIsLoading] = useState(true);
 
-            // 1. Authentication
+            // 1. Authentication (Anonymous Sign-in)
             useEffect(() => {
                 const initAuth = async () => {
                     try {
@@ -67,7 +73,7 @@
                             await auth.signInAnonymously();
                         }
                     } catch (err) {
-                        console.error("Auth error:", err);
+                        console.error("Authentication Error:", err);
                     }
                 };
                 initAuth();
@@ -78,11 +84,11 @@
                 return () => unsubscribe();
             }, []);
 
-            // 2. Real-time Listeners
+            // 2. Real-time Data Sync
             useEffect(() => {
                 if (!user) return;
 
-                // 모임 메타 정보 수신
+                // Sync Meeting Metadata
                 const metaRef = db.doc(`artifacts/${appId}/public/data/settings/meeting`);
                 const unsubscribeMeta = metaRef.onSnapshot((docSnap) => {
                     if (docSnap.exists) {
@@ -91,9 +97,9 @@
                         if (data.targetCount) setTargetCount(data.targetCount);
                         if (data.baseDate) setBaseDate(data.baseDate);
                     }
-                });
+                }, (error) => console.error("Metadata Sync Error:", error));
 
-                // 참가자 목록 수신
+                // Sync Participants List
                 const partRef = db.collection(`artifacts/${appId}/public/data/participants`);
                 const unsubscribePart = partRef.onSnapshot((snapshot) => {
                     const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -107,7 +113,7 @@
                     } else {
                         setIsJoined(false);
                     }
-                });
+                }, (error) => console.error("Participants Sync Error:", error));
 
                 return () => {
                     unsubscribeMeta();
@@ -133,6 +139,7 @@
                 
                 setSelectedDates(newDates);
                 
+                // If already joined, update Firestore immediately for real-time reflection
                 if (isJoined && user) {
                     await db.doc(`artifacts/${appId}/public/data/participants/${user.uid}`).update({
                         availableDates: newDates,
@@ -148,12 +155,13 @@
                 setCurrentUserName('');
             };
 
-            // Calendar Logic
+            // Calendar Rendering Logic
             const { calendarDates, todayStr } = useMemo(() => {
                 const dates = [];
                 const [y, m, d] = baseDate.split('-').map(Number);
                 const base = new Date(y, m - 1, d);
                 const start = new Date(base);
+                // Start from the Sunday of the week containing the base date
                 start.setDate(base.getDate() - base.getDay());
 
                 for (let i = 0; i < 35; i++) {
@@ -180,7 +188,14 @@
             }, [participants]);
 
             if (isLoading || !user) {
-                return <div className="min-h-screen flex items-center justify-center bg-[#F2F4F3] text-gray-400 font-medium italic">공간을 불러오는 중...</div>;
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-[#F2F4F3]">
+                        <div className="text-center">
+                            <div className="w-8 h-8 border-4 border-[#23B5EB] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                            <p className="text-gray-400 font-medium italic">공간을 불러오는 중...</p>
+                        </div>
+                    </div>
+                );
             }
 
             return (
@@ -193,7 +208,7 @@
                         </div>
                     </header>
 
-                    {/* Main Title Card */}
+                    {/* Meeting Status Card */}
                     <section className="bg-white rounded-3xl p-8 shadow-sm border border-gray-200 text-center space-y-3">
                         <h1 className="text-3xl font-black text-gray-700 tracking-tight">{meetingTitle}</h1>
                         <div className="flex justify-center gap-4 text-[11px] font-bold" style={{ color: THEME_COLOR }}>
@@ -202,7 +217,7 @@
                         </div>
                     </section>
 
-                    {/* User Action Area */}
+                    {/* Participation Form / User Profile */}
                     {!isJoined ? (
                         <div className="bg-white rounded-3xl p-8 border border-gray-200 shadow-sm text-center space-y-4">
                             <div className="space-y-1">
@@ -238,19 +253,19 @@
                         </div>
                     )}
 
-                    {/* Calendar Section */}
+                    {/* Interaction Calendar */}
                     <section className="bg-white rounded-3xl p-6 shadow-sm border border-gray-200">
                         <div className="calendar-grid">
                             {['일','월','화','수','목','금','토'].map((d, i) => (
                                 <div key={d} className={`text-center text-[10px] font-bold mb-3 ${i===0 ? 'text-red-400':'text-gray-400'}`}>{d}</div>
                             ))}
-                            {calendarDates.map((dStr, idx) => {
+                            {calendarDates.map((dStr) => {
                                 const day = dStr.split('-')[2];
                                 const isSelected = selectedDates.includes(dStr);
                                 const isToday = dStr === todayStr;
                                 const count = dateCounts[dStr] || 0;
                                 
-                                // 컬러 강도 계산 (0명일 때 투명, 인원이 많을수록 진해짐)
+                                // Color intensity based on number of participants
                                 const intensity = count === 0 ? 0 : Math.min(0.1 + (count / targetCount) * 0.9, 1);
                                 
                                 return (
@@ -277,7 +292,7 @@
                         </div>
                     </section>
 
-                    {/* Participants List */}
+                    {/* Participant Summary List */}
                     <section className="bg-white rounded-3xl p-6 shadow-sm border border-gray-200">
                         <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
                             <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: THEME_COLOR }}></span>
@@ -288,11 +303,15 @@
                                 <div key={p.id} className="bg-gray-50 border border-gray-100 px-3 py-2 rounded-xl flex items-center gap-2">
                                     <span className="text-xs font-bold text-gray-600">{p.name}</span>
                                     <span className="text-[10px] font-medium text-gray-300">|</span>
-                                    <span className="text-[10px] font-black" style={{ color: THEME_COLOR }}>{p.availableDates?.length || 0}일</span>
+                                    <span className="text-[10px] font-black" style={{ color: THEME_COLOR }}>{p.availableDates?.length || 0}일 선택</span>
                                 </div>
                             ))}
                         </div>
                     </section>
+
+                    <footer className="text-center pt-8 pb-12">
+                        <p className="text-[10px] font-bold text-gray-300 tracking-widest uppercase">Collaborative Meeting Tool 🌿</p>
+                    </footer>
                 </div>
             );
         };
