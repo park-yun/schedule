@@ -4,20 +4,29 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>우리의 소중한 만남 🌿 - 일정 조율</title>
+    <!-- CSS & Frameworks CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/lucide@0.344.0/dist/umd/lucide.min.js"></script>
-    <!-- Firebase Libraries -->
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
+    
+    <!-- Firebase SDK (Compatibility Version) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;700;900&display=swap');
-        body { font-family: 'Pretendard', sans-serif; background-color: #F2F4F3; }
-        .animate-pulse-subtle { animation: pulse-subtle 2s infinite ease-in-out; }
-        @keyframes pulse-subtle { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
+        body { 
+            font-family: 'Pretendard', sans-serif; 
+            background-color: #F2F4F3; 
+            -webkit-tap-highlight-color: transparent;
+        }
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 8px;
+        }
     </style>
 </head>
 <body>
@@ -27,10 +36,11 @@
         const { useState, useEffect, useMemo } = React;
 
         // --- Firebase Configuration ---
-        // 이 부분은 제미나이 환경에서 자동으로 주입되지만, 
-        // 외부에서 수동으로 운영하시려면 실제 Firebase 프로젝트 설정값을 넣어야 합니다.
+        // 주의: 이 설정값은 캔버스 실행 환경에서 자동으로 제공되는 변수들을 사용합니다.
+        // 만약 외부 호스팅(Vercel 등)에서 개별적으로 사용하시려면 실제 Firebase 프로젝트의 Config 객체를 넣어주세요.
         const firebaseConfig = JSON.parse(__firebase_config);
         firebase.initializeApp(firebaseConfig);
+        
         const auth = firebase.auth();
         const db = firebase.firestore();
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'meeting-planner-v2';
@@ -46,10 +56,8 @@
             const [selectedDates, setSelectedDates] = useState([]);
             const [isJoined, setIsJoined] = useState(false);
             const [isLoading, setIsLoading] = useState(true);
-            const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-            const [showResetConfirm, setShowResetConfirm] = useState(false);
 
-            // Authentication
+            // 1. Authentication
             useEffect(() => {
                 const initAuth = async () => {
                     try {
@@ -58,7 +66,9 @@
                         } else {
                             await auth.signInAnonymously();
                         }
-                    } catch (err) { console.error("Auth error:", err); }
+                    } catch (err) {
+                        console.error("Auth error:", err);
+                    }
                 };
                 initAuth();
                 const unsubscribe = auth.onAuthStateChanged((u) => {
@@ -68,10 +78,11 @@
                 return () => unsubscribe();
             }, []);
 
-            // Real-time Sync
+            // 2. Real-time Listeners
             useEffect(() => {
                 if (!user) return;
 
+                // 모임 메타 정보 수신
                 const metaRef = db.doc(`artifacts/${appId}/public/data/settings/meeting`);
                 const unsubscribeMeta = metaRef.onSnapshot((docSnap) => {
                     if (docSnap.exists) {
@@ -82,27 +93,31 @@
                     }
                 });
 
+                // 참가자 목록 수신
                 const partRef = db.collection(`artifacts/${appId}/public/data/participants`);
                 const unsubscribePart = partRef.onSnapshot((snapshot) => {
                     const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setParticipants(list);
+                    
                     const me = list.find(p => p.id === user.uid);
                     if (me) {
                         setIsJoined(true);
                         setCurrentUserName(me.name || '');
                         setSelectedDates(me.availableDates || []);
+                    } else {
+                        setIsJoined(false);
                     }
                 });
 
-                return () => { unsubscribeMeta(); unsubscribePart(); };
+                return () => {
+                    unsubscribeMeta();
+                    unsubscribePart();
+                };
             }, [user]);
 
-            const updateMeta = async (updates) => {
-                await db.doc(`artifacts/${appId}/public/data/settings/meeting`).set({ ...updates, updatedAt: Date.now() }, { merge: true });
-            };
-
+            // Actions
             const handleJoin = async () => {
-                if (!currentUserName.trim()) return;
+                if (!currentUserName.trim() || selectedDates.length === 0) return;
                 await db.doc(`artifacts/${appId}/public/data/participants/${user.uid}`).set({
                     name: currentUserName,
                     availableDates: selectedDates,
@@ -112,16 +127,25 @@
             };
 
             const toggleDate = async (dateStr) => {
-                const newDates = selectedDates.includes(dateStr) ? selectedDates.filter(d => d !== dateStr) : [...selectedDates, dateStr];
+                const newDates = selectedDates.includes(dateStr) 
+                    ? selectedDates.filter(d => d !== dateStr) 
+                    : [...selectedDates, dateStr];
+                
                 setSelectedDates(newDates);
-                if (isJoined) {
-                    await db.doc(`artifacts/${appId}/public/data/participants/${user.uid}`).update({ availableDates: newDates });
+                
+                if (isJoined && user) {
+                    await db.doc(`artifacts/${appId}/public/data/participants/${user.uid}`).update({
+                        availableDates: newDates,
+                        updatedAt: Date.now()
+                    });
                 }
             };
 
-            const leave = async () => {
+            const leaveMeeting = async () => {
                 await db.doc(`artifacts/${appId}/public/data/participants/${user.uid}`).delete();
-                setIsJoined(false); setSelectedDates([]); setCurrentUserName('');
+                setIsJoined(false);
+                setSelectedDates([]);
+                setCurrentUserName('');
             };
 
             // Calendar Logic
@@ -131,104 +155,142 @@
                 const base = new Date(y, m - 1, d);
                 const start = new Date(base);
                 start.setDate(base.getDate() - base.getDay());
-                for (let i = 0; i < 42; i++) {
+
+                for (let i = 0; i < 35; i++) {
                     const curr = new Date(start);
                     curr.setDate(start.getDate() + i);
-                    dates.push(`${curr.getFullYear()}-${String(curr.getMonth() + 1).padStart(2, '0')}-${String(curr.getDate()).padStart(2, '0')}`);
+                    const yStr = curr.getFullYear();
+                    const mStr = String(curr.getMonth() + 1).padStart(2, '0');
+                    const dStr = String(curr.getDate()).padStart(2, '0');
+                    dates.push(`${yStr}-${mStr}-${dStr}`);
                 }
                 const now = new Date();
-                return { calendarDates: dates, todayStr: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}` };
+                const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                return { calendarDates: dates, todayStr: today };
             }, [baseDate]);
 
-            const counts = useMemo(() => {
+            const dateCounts = useMemo(() => {
                 const c = {};
-                participants.forEach(p => (p.availableDates || []).forEach(d => c[d] = (c[d] || 0) + 1));
+                participants.forEach(p => {
+                    (p.availableDates || []).forEach(d => {
+                        c[d] = (c[d] || 0) + 1;
+                    });
+                });
                 return c;
             }, [participants]);
 
-            if (isLoading) return <div className="min-h-screen flex items-center justify-center italic text-gray-400">Loading...</div>;
+            if (isLoading || !user) {
+                return <div className="min-h-screen flex items-center justify-center bg-[#F2F4F3] text-gray-400 font-medium italic">공간을 불러오는 중...</div>;
+            }
 
             return (
-                <div className="min-h-screen p-4 md:p-8 max-w-2xl mx-auto space-y-6 pb-20">
+                <div className="min-h-screen p-4 md:p-8 max-w-2xl mx-auto space-y-6">
                     {/* Header */}
                     <header className="flex justify-between items-center px-2">
                         <div className="flex items-center gap-2" style={{ color: THEME_COLOR }}>
                             <div className="w-8 h-8 rounded-full bg-white shadow-sm flex items-center justify-center border border-gray-200">🌿</div>
                             <span className="text-xs font-black tracking-widest uppercase">Meeting Space</span>
                         </div>
-                        <button onClick={() => setIsSettingsOpen(true)} className="p-2.5 bg-white rounded-xl shadow-sm border border-gray-200">⚙️</button>
                     </header>
 
-                    {/* Hero */}
+                    {/* Main Title Card */}
                     <section className="bg-white rounded-3xl p-8 shadow-sm border border-gray-200 text-center space-y-3">
-                        <h1 className="text-3xl font-black text-gray-700">{meetingTitle}</h1>
+                        <h1 className="text-3xl font-black text-gray-700 tracking-tight">{meetingTitle}</h1>
                         <div className="flex justify-center gap-4 text-[11px] font-bold" style={{ color: THEME_COLOR }}>
-                            <span>👥 {targetCount}명 목표</span>
-                            <span>📅 {participants.length}명 응답</span>
+                            <span className="bg-blue-50 px-3 py-1 rounded-full">👥 {targetCount}명 목표</span>
+                            <span className="bg-blue-50 px-3 py-1 rounded-full">📅 {participants.length}명 응답</span>
                         </div>
                     </section>
 
-                    {/* Join/User Card */}
+                    {/* User Action Area */}
                     {!isJoined ? (
                         <div className="bg-white rounded-3xl p-8 border border-gray-200 shadow-sm text-center space-y-4">
-                            <h2 className="text-lg font-bold text-gray-600">일정 등록하기</h2>
+                            <div className="space-y-1">
+                                <h2 className="text-lg font-bold text-gray-700">참여하기</h2>
+                                <p className="text-xs text-gray-400">아래 달력에서 가능한 날짜를 선택 후 이름을 적어주세요.</p>
+                            </div>
                             <input 
                                 type="text" 
                                 placeholder="성함을 입력하세요"
                                 value={currentUserName}
                                 onChange={e => setCurrentUserName(e.target.value)}
-                                className="w-full p-4 rounded-2xl bg-gray-50 border-none text-center focus:ring-2 focus:ring-[#23B5EB] outline-none"
+                                className="w-full p-4 rounded-2xl bg-gray-50 border-none text-center text-gray-700 focus:ring-2 focus:ring-[#23B5EB] outline-none"
                             />
                             <button 
                                 onClick={handleJoin}
                                 disabled={!currentUserName.trim() || selectedDates.length === 0}
-                                className="w-full py-4 rounded-2xl font-black text-white shadow-lg disabled:bg-gray-300"
+                                className="w-full py-4 rounded-2xl font-black text-white shadow-lg transition-transform active:scale-95 disabled:bg-gray-300 disabled:shadow-none"
                                 style={{ backgroundColor: THEME_COLOR }}
                             >
-                                조율 참여하기 ✨
+                                일정 등록 완료 ✨
                             </button>
                         </div>
                     ) : (
                         <div className="bg-white rounded-2xl p-5 border border-gray-200 shadow-sm flex justify-between items-center">
                             <div className="flex items-center gap-3">
-                                <div className="text-2xl">👤</div>
+                                <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-xl">👤</div>
                                 <div>
                                     <div className="font-bold text-gray-700">{currentUserName}님</div>
-                                    <div className="text-[10px] text-gray-400">실시간 동기화 중</div>
+                                    <div className="text-[10px] text-gray-400">날짜를 클릭하면 실시간으로 수정됩니다.</div>
                                 </div>
                             </div>
-                            <button onClick={leave} className="p-2 text-red-300 hover:text-red-500">❌ 삭제</button>
+                            <button onClick={leaveMeeting} className="text-red-300 hover:text-red-500 text-sm font-bold p-2 transition-colors">참여 취소</button>
                         </div>
                     )}
 
-                    {/* Calendar */}
+                    {/* Calendar Section */}
                     <section className="bg-white rounded-3xl p-6 shadow-sm border border-gray-200">
-                        <div className="grid grid-cols-7 gap-2">
+                        <div className="calendar-grid">
                             {['일','월','화','수','목','금','토'].map((d, i) => (
-                                <div key={d} className={`text-center text-[10px] font-bold mb-2 ${i===0 ? 'text-red-400':'text-gray-400'}`}>{d}</div>
+                                <div key={d} className={`text-center text-[10px] font-bold mb-3 ${i===0 ? 'text-red-400':'text-gray-400'}`}>{d}</div>
                             ))}
                             {calendarDates.map((dStr, idx) => {
                                 const day = dStr.split('-')[2];
                                 const isSelected = selectedDates.includes(dStr);
-                                const count = counts[dStr] || 0;
+                                const isToday = dStr === todayStr;
+                                const count = dateCounts[dStr] || 0;
+                                
+                                // 컬러 강도 계산 (0명일 때 투명, 인원이 많을수록 진해짐)
                                 const intensity = count === 0 ? 0 : Math.min(0.1 + (count / targetCount) * 0.9, 1);
                                 
                                 return (
                                     <button 
                                         key={dStr}
                                         onClick={() => toggleDate(dStr)}
-                                        className="h-14 rounded-xl border-2 flex items-center justify-center relative transition-all"
+                                        className={`h-14 rounded-xl border-2 flex flex-col items-center justify-center relative transition-all active:scale-90`}
                                         style={{ 
                                             backgroundColor: isSelected ? THEME_COLOR : `rgba(35, 181, 235, ${intensity})`,
-                                            borderColor: isSelected ? THEME_COLOR : 'transparent',
+                                            borderColor: isSelected ? THEME_COLOR : (isToday ? '#23B5EB33' : 'transparent'),
                                             color: (isSelected || (count > targetCount/2)) ? 'white' : '#4A5751'
                                         }}
                                     >
                                         <span className="text-xs font-black">{parseInt(day)}</span>
-                                        {count >= targetCount && !isSelected && <div className="absolute top-1 right-1 w-1.5 h-1.5 bg-yellow-400 rounded-full animate-pulse"></div>}
+                                        {count > 0 && !isSelected && (
+                                            <span className="text-[9px] font-bold mt-0.5 opacity-80">{count}명</span>
+                                        )}
+                                        {count >= targetCount && !isSelected && (
+                                            <div className="absolute top-1 right-1 w-1.5 h-1.5 bg-yellow-400 rounded-full animate-pulse shadow-sm"></div>
+                                        )}
                                     </button>
                                 );
                             })}
+                        </div>
+                    </section>
+
+                    {/* Participants List */}
+                    <section className="bg-white rounded-3xl p-6 shadow-sm border border-gray-200">
+                        <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: THEME_COLOR }}></span>
+                            응답 현황 ({participants.length})
+                        </h3>
+                        <div className="flex flex-wrap gap-2">
+                            {participants.map(p => (
+                                <div key={p.id} className="bg-gray-50 border border-gray-100 px-3 py-2 rounded-xl flex items-center gap-2">
+                                    <span className="text-xs font-bold text-gray-600">{p.name}</span>
+                                    <span className="text-[10px] font-medium text-gray-300">|</span>
+                                    <span className="text-[10px] font-black" style={{ color: THEME_COLOR }}>{p.availableDates?.length || 0}일</span>
+                                </div>
+                            ))}
                         </div>
                     </section>
                 </div>
