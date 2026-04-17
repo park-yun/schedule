@@ -27,7 +27,6 @@
             grid-template-columns: repeat(7, 1fr);
             gap: 8px;
         }
-        /* Mobile Touch Optimizations */
         button {
             touch-action: manipulation;
         }
@@ -39,13 +38,19 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        /**
-         * Firebase Configuration
-         * Note: In a production environment, you should replace these placeholders
-         * with your actual Firebase project configuration.
-         */
-        const firebaseConfig = JSON.parse(__firebase_config);
-        firebase.initializeApp(firebaseConfig);
+        // --- Firebase Configuration & Initialization ---
+        // External browser fallback logic
+        let config = {};
+        try {
+            config = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        } catch (e) {
+            console.error("Firebase config parse error", e);
+        }
+
+        // Initialize Firebase only if config exists
+        if (config.apiKey) {
+            firebase.initializeApp(config);
+        }
         
         const auth = firebase.auth();
         const db = firebase.firestore();
@@ -62,9 +67,16 @@
             const [selectedDates, setSelectedDates] = useState([]);
             const [isJoined, setIsJoined] = useState(false);
             const [isLoading, setIsLoading] = useState(true);
+            const [error, setError] = useState(null);
 
-            // 1. Authentication (Anonymous Sign-in)
+            // 1. Authentication
             useEffect(() => {
+                if (!config.apiKey) {
+                    setError("Firebase 설정이 누락되었습니다. Canvas 환경에서 코드를 확인해주세요.");
+                    setIsLoading(false);
+                    return;
+                }
+
                 const initAuth = async () => {
                     try {
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -73,7 +85,7 @@
                             await auth.signInAnonymously();
                         }
                     } catch (err) {
-                        console.error("Authentication Error:", err);
+                        console.error("Auth error:", err);
                     }
                 };
                 initAuth();
@@ -84,11 +96,10 @@
                 return () => unsubscribe();
             }, []);
 
-            // 2. Real-time Data Sync
+            // 2. Real-time Sync
             useEffect(() => {
                 if (!user) return;
 
-                // Sync Meeting Metadata
                 const metaRef = db.doc(`artifacts/${appId}/public/data/settings/meeting`);
                 const unsubscribeMeta = metaRef.onSnapshot((docSnap) => {
                     if (docSnap.exists) {
@@ -97,9 +108,8 @@
                         if (data.targetCount) setTargetCount(data.targetCount);
                         if (data.baseDate) setBaseDate(data.baseDate);
                     }
-                }, (error) => console.error("Metadata Sync Error:", error));
+                }, (err) => console.error("Meta snapshot error", err));
 
-                // Sync Participants List
                 const partRef = db.collection(`artifacts/${appId}/public/data/participants`);
                 const unsubscribePart = partRef.onSnapshot((snapshot) => {
                     const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -113,7 +123,7 @@
                     } else {
                         setIsJoined(false);
                     }
-                }, (error) => console.error("Participants Sync Error:", error));
+                }, (err) => console.error("Participants snapshot error", err));
 
                 return () => {
                     unsubscribeMeta();
@@ -121,7 +131,6 @@
                 };
             }, [user]);
 
-            // Actions
             const handleJoin = async () => {
                 if (!currentUserName.trim() || selectedDates.length === 0) return;
                 await db.doc(`artifacts/${appId}/public/data/participants/${user.uid}`).set({
@@ -139,7 +148,6 @@
                 
                 setSelectedDates(newDates);
                 
-                // If already joined, update Firestore immediately for real-time reflection
                 if (isJoined && user) {
                     await db.doc(`artifacts/${appId}/public/data/participants/${user.uid}`).update({
                         availableDates: newDates,
@@ -155,13 +163,11 @@
                 setCurrentUserName('');
             };
 
-            // Calendar Rendering Logic
             const { calendarDates, todayStr } = useMemo(() => {
                 const dates = [];
                 const [y, m, d] = baseDate.split('-').map(Number);
                 const base = new Date(y, m - 1, d);
                 const start = new Date(base);
-                // Start from the Sunday of the week containing the base date
                 start.setDate(base.getDate() - base.getDay());
 
                 for (let i = 0; i < 35; i++) {
@@ -187,20 +193,11 @@
                 return c;
             }, [participants]);
 
-            if (isLoading || !user) {
-                return (
-                    <div className="min-h-screen flex items-center justify-center bg-[#F2F4F3]">
-                        <div className="text-center">
-                            <div className="w-8 h-8 border-4 border-[#23B5EB] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                            <p className="text-gray-400 font-medium italic">공간을 불러오는 중...</p>
-                        </div>
-                    </div>
-                );
-            }
+            if (error) return <div className="min-h-screen flex items-center justify-center p-8 text-center text-red-500">{error}</div>;
+            if (isLoading || !user) return <div className="min-h-screen flex items-center justify-center text-gray-400 italic">공간 연결 중...</div>;
 
             return (
                 <div className="min-h-screen p-4 md:p-8 max-w-2xl mx-auto space-y-6">
-                    {/* Header */}
                     <header className="flex justify-between items-center px-2">
                         <div className="flex items-center gap-2" style={{ color: THEME_COLOR }}>
                             <div className="w-8 h-8 rounded-full bg-white shadow-sm flex items-center justify-center border border-gray-200">🌿</div>
@@ -208,7 +205,6 @@
                         </div>
                     </header>
 
-                    {/* Meeting Status Card */}
                     <section className="bg-white rounded-3xl p-8 shadow-sm border border-gray-200 text-center space-y-3">
                         <h1 className="text-3xl font-black text-gray-700 tracking-tight">{meetingTitle}</h1>
                         <div className="flex justify-center gap-4 text-[11px] font-bold" style={{ color: THEME_COLOR }}>
@@ -217,13 +213,9 @@
                         </div>
                     </section>
 
-                    {/* Participation Form / User Profile */}
                     {!isJoined ? (
                         <div className="bg-white rounded-3xl p-8 border border-gray-200 shadow-sm text-center space-y-4">
-                            <div className="space-y-1">
-                                <h2 className="text-lg font-bold text-gray-700">참여하기</h2>
-                                <p className="text-xs text-gray-400">아래 달력에서 가능한 날짜를 선택 후 이름을 적어주세요.</p>
-                            </div>
+                            <h2 className="text-lg font-bold text-gray-700">참여하기</h2>
                             <input 
                                 type="text" 
                                 placeholder="성함을 입력하세요"
@@ -234,7 +226,7 @@
                             <button 
                                 onClick={handleJoin}
                                 disabled={!currentUserName.trim() || selectedDates.length === 0}
-                                className="w-full py-4 rounded-2xl font-black text-white shadow-lg transition-transform active:scale-95 disabled:bg-gray-300 disabled:shadow-none"
+                                className="w-full py-4 rounded-2xl font-black text-white shadow-lg transition-transform active:scale-95 disabled:bg-gray-300"
                                 style={{ backgroundColor: THEME_COLOR }}
                             >
                                 일정 등록 완료 ✨
@@ -246,14 +238,13 @@
                                 <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-xl">👤</div>
                                 <div>
                                     <div className="font-bold text-gray-700">{currentUserName}님</div>
-                                    <div className="text-[10px] text-gray-400">날짜를 클릭하면 실시간으로 수정됩니다.</div>
+                                    <div className="text-[10px] text-gray-400">날짜를 클릭하여 수정하세요.</div>
                                 </div>
                             </div>
-                            <button onClick={leaveMeeting} className="text-red-300 hover:text-red-500 text-sm font-bold p-2 transition-colors">참여 취소</button>
+                            <button onClick={leaveMeeting} className="text-red-300 hover:text-red-500 text-sm font-bold p-2">참여 취소</button>
                         </div>
                     )}
 
-                    {/* Interaction Calendar */}
                     <section className="bg-white rounded-3xl p-6 shadow-sm border border-gray-200">
                         <div className="calendar-grid">
                             {['일','월','화','수','목','금','토'].map((d, i) => (
@@ -264,8 +255,6 @@
                                 const isSelected = selectedDates.includes(dStr);
                                 const isToday = dStr === todayStr;
                                 const count = dateCounts[dStr] || 0;
-                                
-                                // Color intensity based on number of participants
                                 const intensity = count === 0 ? 0 : Math.min(0.1 + (count / targetCount) * 0.9, 1);
                                 
                                 return (
@@ -280,38 +269,24 @@
                                         }}
                                     >
                                         <span className="text-xs font-black">{parseInt(day)}</span>
-                                        {count > 0 && !isSelected && (
-                                            <span className="text-[9px] font-bold mt-0.5 opacity-80">{count}명</span>
-                                        )}
-                                        {count >= targetCount && !isSelected && (
-                                            <div className="absolute top-1 right-1 w-1.5 h-1.5 bg-yellow-400 rounded-full animate-pulse shadow-sm"></div>
-                                        )}
+                                        {count > 0 && !isSelected && <span className="text-[9px] font-bold mt-0.5 opacity-80">{count}명</span>}
                                     </button>
                                 );
                             })}
                         </div>
                     </section>
 
-                    {/* Participant Summary List */}
                     <section className="bg-white rounded-3xl p-6 shadow-sm border border-gray-200">
-                        <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: THEME_COLOR }}></span>
-                            응답 현황 ({participants.length})
-                        </h3>
+                        <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">응답 현황 ({participants.length})</h3>
                         <div className="flex flex-wrap gap-2">
                             {participants.map(p => (
                                 <div key={p.id} className="bg-gray-50 border border-gray-100 px-3 py-2 rounded-xl flex items-center gap-2">
                                     <span className="text-xs font-bold text-gray-600">{p.name}</span>
-                                    <span className="text-[10px] font-medium text-gray-300">|</span>
-                                    <span className="text-[10px] font-black" style={{ color: THEME_COLOR }}>{p.availableDates?.length || 0}일 선택</span>
+                                    <span className="text-[10px] font-black" style={{ color: THEME_COLOR }}>{p.availableDates?.length || 0}일</span>
                                 </div>
                             ))}
                         </div>
                     </section>
-
-                    <footer className="text-center pt-8 pb-12">
-                        <p className="text-[10px] font-bold text-gray-300 tracking-widest uppercase">Collaborative Meeting Tool 🌿</p>
-                    </footer>
                 </div>
             );
         };
